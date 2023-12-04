@@ -1,0 +1,7 @@
+start: set_expr ";"? -> final
+?set_expr: select ((set_op) select)*
+select: "SELECT"i
+set_op: "INTERSECT"i
+
+%import common.WS
+%ignore WS

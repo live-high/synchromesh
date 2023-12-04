@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import collections
+from typing import List
 
 # Trie representation of a vocabulary.
 class Trie:
@@ -15,16 +16,15 @@ class Trie:
             self.children[key[depth]].insert(key, value, depth + 1)
 
     @staticmethod
-    def from_vocabulary(vocab: list[str]):
+    def from_vocabulary(vocab: List[str]):
         t = Trie()
 
         for i, token in enumerate(vocab):
-            if token:
-                t.insert(token, i)
+            t.insert(token, i)
 
         return t
 
-    def antimonotonic_filter(self, predicate, key='') -> list[str]:
+    def antimonotonic_filter(self, predicate, key='') -> List[str]:
         this_node_valid = predicate(key)
 
         if not this_node_valid:

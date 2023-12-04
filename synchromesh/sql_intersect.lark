@@ -1,0 +1,51 @@
+start: select -> final
+
+select: "SELECT"i select_expr "FROM"i from_expr "WHERE"i where_expr ";"
+       | "SELECT"i select_expr "FROM"i from_expr "WHERE"i where_expr "INTERSECT"i ["DISTINCT"i] select 
+
+where_expr: bool_expression
+
+select_expr.0: expression_math -> select_expression
+
+?from_expr: from_item -> from_expression
+
+from_item: table_name -> table
+
+?expression_math: expression_product
+
+table_name: TABLE_NAME | "`" table_name "`"
+column_name: COLUMN_NAME | "`" column_name "`"
+
+?expression_product: expression_parens
+
+?expression_parens: expression
+
+?expression: [table_name "."] (name | STAR)
+            | literal
+
+bool_expression: bool_parentheses
+bool_parentheses: comparison_type
+
+comparison_type: greater_than | less_than
+greater_than: expression_math ">" expression_math
+less_than: expression_math "<" expression_math
+?literal: boolean -> bool
+       | number_expr -> number
+       
+boolean: "true"i -> true
+       | "false"i -> false
+?reg_expr: /'([^']|\s)+'|''/
+?number_expr: product
+
+?product: NUMBER
+
+integer_: /[1-9][0-9]*/
+STAR: "*"
+
+name: CNAME | ESCAPED_STRING| "`" (name|" ")* (name|" ") "`"
+
+%import common.ESCAPED_STRING
+%import common.CNAME
+%import common.NUMBER
+%import common.WS
+%ignore WS
