@@ -1,0 +1,146 @@
+start: set_expr [";"i] -> final
+
+?set_expr: select
+           | set_expr "UNION"i set_expr -> union_expr
+           | set_expr "INTERSECT"i set_expr -> intersect_expr
+           | set_expr "EXCEPT"i set_expr -> except_expr
+
+select: "SELECT"i select_expr _FROM from_expr ["WHERE"i where_expr] ["GROUP"i "BY"i groupby_expr] ["HAVING"i having_expr] ["ORDER"i "BY"i orderby_expr] ["LIMIT"i limit_expr]
+select_expr: [(expr_math ","i)*] expr_math_star
+// ?expr_math_alias: expr_math [["AS"i] alias]
+from_expr: join
+where_expr: bool_expr
+groupby_expr: [(expr_math ","i)*] expr_math
+having_expr: bool_expr
+orderby_expr: [(order ","i)*] order
+?order: (expr_math | bool_expr) ["ASC"i] -> order_asc
+        | (expr_math | bool_expr) "DESC"i -> order_desc
+limit_expr: number
+
+subquery: "("i set_expr ")"i [["AS"i] alias]
+
+?join: from_item
+      | join "JOIN"i from_item ["ON"i on_expr]
+      | join "INNER"i "JOIN"i from_item ["ON"i on_expr] -> inner_join
+      | join "FULL"i "JOIN"i from_item ["ON"i on_expr] -> full_join
+      | join "RIGHT"i "JOIN"i from_item ["ON"i on_expr] -> right_join
+      | join "LEFT"i "JOIN"i from_item ["ON"i on_expr]  -> left_join
+      | join "CROSS"i "JOIN"i from_item  -> cross_join
+
+on_expr: bool_expr
+
+?from_item: TABLENAME ["AS"i alias]
+           | subquery
+
+?bool_expr: bool_parens 
+            | bool_expr "AND"i bool_parens -> bool_and
+            | bool_expr "OR"i bool_parens -> bool_or
+
+?bool_parens: comparison_expr
+              | "("i bool_parens "AND"i comparison_expr ")"i -> bool_and_parens
+              | "("i bool_parens "OR"i comparison_expr ")"i -> bool_or_parens
+
+?comparison_expr: equal
+                  | not_equal
+                  | like
+                  | not_like
+                  | greater_than
+                  | less_than
+                  | greater_equal_than
+                  | less_equal_than
+                  | between
+                  | in_expr
+                  | not_in_expr
+                  | in_subquery
+                  | not_in_subquery
+                  | is_null
+                  | is_not_null
+
+equal: expr_math "="i expr_math
+not_equal: expr_math _DIFF expr_math
+like: expr_math "like"i expr_math
+not_like: expr_math "not"i "like"i expr_math
+greater_than: expr_math ">"i expr_math
+less_than: expr_math "<"i expr_math
+greater_equal_than: expr_math _GEQ expr_math
+less_equal_than: expr_math _LEQ expr_math
+between: expr_math "between"i expr_math "AND"i expr_math
+in_expr: expr_math "in"i "("i [expr_math ","i]* expr_math ")"i
+not_in_expr: expr_math "not"i "in"i "("i [expr_math ","i]* expr_math ")"i
+is_null: expr_math "is"i "null"i
+is_not_null: expr_math "is"i "not"i "null"i
+in_subquery: expr_math "in"i  subquery
+not_in_subquery: expr_math "not"i "in"i subquery 
+
+?expr_math: expr_product 
+           | "DISTINCT"i expr_math_star -> distinct_expr
+           | _DISTINCT  expr_math_star ")"i -> distinct_expr
+           | expr_math "+"i expr_product -> add_expr
+           | expr_math "-"i expr_product -> sub_expr
+           | agg_expr
+
+?agg_expr: _MIN expr_math ")"i -> min_agg
+           | _MAX expr_math ")"i -> max_agg
+           | _COUNT expr_math_star ")"i -> count_agg
+           | _AVG expr_math ")"i -> avg_agg
+           | _SUM expr_math ")"i -> sum_agg
+
+?expr_math_star: expr_math
+                 | STAR
+
+
+?expr_product: expr_parens
+              | expr_product "*"i expr_parens -> mult_expr
+              | expr_product "/"i expr_parens -> div_expr
+
+
+?expr_parens: expr
+             | "("i expr_parens ")"i -> parens
+             | "("i expr_parens "*"i expr_parens ")"i -> mult_expr_parens
+             | "("i expr_parens "/"i expr_parens ")"i -> div_expr_parens
+             | "("i expr_parens "+"i expr_parens ")"i -> div_expr_parens
+             | "("i expr_parens "-"i expr_parens ")"i -> div_expr_parens
+
+?expr: terminal | column | subquery
+
+terminal: number | double_quoted_string | single_quoted_string
+column: COLUMNNAME
+alias: ALIAS
+number:  [int "."i] int
+int: digits | neg_digits
+
+LCASE_LETTER: "a".."z"
+UCASE_LETTER: "A".."Z"
+DIGIT: "0".."9"
+digits: DIGIT+
+neg_digits: "-"i DIGIT+
+
+
+?double_quoted_string: _DOUBLE_QUOTED [DOUBLE_QUOTED_STRING] _DOUBLE_QUOTED
+?single_quoted_string: _SINGLE_QUOTED [SINGLE_QUOTED_STRING] _SINGLE_QUOTED
+
+
+DOUBLE_QUOTED_STRING: /[^"]+/ // SQL only allows single quoted 
+                              // Done this because tokenizer has problems with single quoted
+SINGLE_QUOTED_STRING: /[^']+/
+
+STAR: "*"i
+COLUMNNAME.1: [(ALIAS | TABLENAME) "."i] (CNAME)
+TABLENAME.1: CNAME
+ALIAS.2: "t"i DIGIT+
+
+_FROM.3: "FROM"i
+_AVG.2: "avg"i WS* "("i
+_MIN.2: "min"i WS* "("i
+_MAX.2: "max"i WS* "("i
+_COUNT.2: "count"i WS* "("i
+_DISTINCT.2: "distinct"i WS* "("i
+_SUM.2: "sum"i WS* "("i
+_GEQ: ">="i
+_LEQ: "<="i
+_DIFF: "!="i
+_SINGLE_QUOTED: /'/
+_DOUBLE_QUOTED: /"/
+
+%import common (CNAME, WS)
+%ignore WS

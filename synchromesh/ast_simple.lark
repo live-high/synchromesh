@@ -1,0 +1,15 @@
+start: select_expr ";"? -> final
+?select_expr: select | select (set_expr)+
+
+select: "SELECT"i name "FROM"i table_name where_expr
+set_expr: ("INTERSECT"i) select
+
+where_expr: "WHERE" name (">"|"<") NUMBER
+table_name: CNAME | "`" table_name "`"
+name: CNAME | ESCAPED_STRING | "`" (name|" ")* (name|" ") "`"
+
+%import common.ESCAPED_STRING
+%import common.CNAME
+%import common.NUMBER
+%import common.WS
+%ignore WS

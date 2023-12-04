@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-
+from typing import List, Tuple
 import random
 import json
 import os
@@ -12,17 +12,17 @@ import transformers
 import torch
 
 class LanguageModel:
-    def vocabulary(self) -> list[str]:
+    def vocabulary(self) -> List[str]:
         raise NotImplementedError()
 
-    def predict_tokens(self, prefix: str, n: int) -> list[int]:
+    def predict_tokens(self, prefix: str, n: int) -> List[int]:
         raise NotImplementedError()
 
-    def predict_token(self, prefix: str, valid_tokens: list[int], top_k: int = 1) -> tuple[list[int], list[float]]:
+    def predict_token(self, prefix: str, valid_tokens: List[int], top_k: int = 1) -> Tuple[List[int], List[float]]:
         'Given prefix (prompt + already generated code), predicts next token'
         raise NotImplementedError()
 
-    def tokenize(self, s: str) -> list[int]:
+    def tokenize(self, s: str) -> List[int]:
         raise NotImplementedError()
 
     def get_token(self, i: int) -> str:
@@ -33,13 +33,13 @@ class LanguageModel:
 
 
 class RandomLanguageModel(LanguageModel):
-    def vocabulary(self) -> list[str]:
+    def vocabulary(self) -> List[str]:
         return list(map(chr, range(128)))
 
-    def tokenize(self, s: str) -> list[int]:
+    def tokenize(self, s: str) -> List[int]:
         return list(map(ord, s))
 
-    def predict_token(self, prefix: str, valid_tokens: list[int], top_k: int = 1) -> tuple[list[int], list[float]]:
+    def predict_token(self, prefix: str, valid_tokens: List[int], top_k: int = 1) -> Tuple[List[int], List[float]]:
         predictions = random.sample(valid_tokens, min(top_k, len(valid_tokens)))
         probabilities = [1.0 / len(predictions)] * len(predictions)
         return predictions, probabilities
@@ -54,7 +54,6 @@ def download_or_use_cached(url, path):
             with open(path, 'wb') as f:
                 f.write(response.read())
     return path
-
 
 class HuggingFaceModel(LanguageModel):
     def __init__(self, model, prompt_template: str, api_key: str = None,
@@ -79,7 +78,7 @@ class HuggingFaceModel(LanguageModel):
 
         # HACK: Is there a better way to know if a token has a prefix space?
         # We should only need this for LlamaTokenizer.
-        if self.tokenizer.__class__.__name__.startswith('LlamaTokenizer'):
+        if isinstance(self.tokenizer, transformers.LlamaTokenizer):
             for i in range(len(self.vocab)):
                 t = self.vocab[i]
                 if 2*len(t) != len(self.tokenizer.decode([i, i], add_special_tokens=False)):
@@ -87,13 +86,13 @@ class HuggingFaceModel(LanguageModel):
                 if t == '':
                     self.vocab[i] = ' '
 
-    def tokenize(self, s: str) -> list[int]:
+    def tokenize(self, s: str) -> List[int]:
         return self.tokenizer.encode(s, add_special_tokens=False)
 
-    def vocabulary(self) -> list[str]:
+    def vocabulary(self) -> List[str]:
         return self.vocab
 
-    def predict_token(self, prefix: str, valid_tokens: list[int], top_k: int = 1) -> tuple[list[int], list[float]]:
+    def predict_token(self, prefix: str, valid_tokens: List[int], top_k: int = 1) -> Tuple[List[int], List[float]]:
         input_ids = self.tokenizer.encode(prefix, return_tensors="pt", add_special_tokens=False)
         input_ids = input_ids.to(self.device)
         with torch.no_grad():
@@ -150,57 +149,6 @@ class HuggingFaceModel(LanguageModel):
                 detokenized = detokenized.split(stop_token)[0]
         return detokenized
 
-    def predict_constrained_streaming(self,
-                                      prefix: str,
-                                      constraint_stream: 'StreamingCSD',
-                                      max_tokens:int) -> str:
-        input_ids = self.tokenizer.encode(f'{self.prompt_template}{prefix}',
-                                          return_tensors="pt", add_special_tokens=False)
-        input_ids = input_ids.to(self.device)
-        past_key_values = None
-
-        with torch.no_grad():
-            it = 0
-            while it < max_tokens and not constraint_stream.is_complete():
-                it += 1
-                model_out = self.model(input_ids,
-                                       use_cache=True,
-                                       past_key_values=past_key_values)
-
-                past_key_values = model_out.past_key_values
-                logits = model_out.logits[:, -1].squeeze(0)
-                token_p = (logits / self.temperature).softmax(-1)
-
-                # Sample a token and check if valid. If not, compute constraints.
-                next_token = token_p.multinomial(1).item()
-
-                if not constraint_stream.can_token_follow(next_token):
-                    valid_tokens = constraint_stream.get_valid_tokens()
-                    valid_tokens_mask = torch.zeros(logits.shape[-1], dtype=torch.bool)
-                    valid_tokens_set = set(valid_tokens)
-
-                    if None in valid_tokens_set:
-                        valid_tokens_set.remove(None)
-
-                    valid_tokens = list(valid_tokens_set)
-                    valid_tokens_mask[valid_tokens] = True
-                    token_p = logits[:]
-                    token_p[~valid_tokens_mask] = float('-inf')
-                    token_p = (token_p / self.temperature).softmax(-1)
-
-                    # Renormalize and resample
-                    assert token_p.sum() > 0, \
-                            f"No valid tokens at given prefix '{constraint_stream.get_current_prediction()}'. This might be an issue with the Completion Engine."
-                    next_token = token_p.multinomial(1).item()
-
-                    assert next_token in valid_tokens, 'Sampled a forbidden token. This is likely a bug.'
-
-                constraint_stream.feed_prediction(next_token)
-                input_ids = torch.ones((1, 1), device=self.device, dtype=int) * next_token
-
-        return constraint_stream.get_current_prediction()
-
-
 def make_request_key(model, prompt, best_of,
                      max_tokens, temperature, valid_tokens):
     valid_tokens = sorted(valid_tokens) if valid_tokens else None
@@ -212,7 +160,9 @@ def make_request_key(model, prompt, best_of,
     kvs.sort()
     return ';'.join([f'{repr(k)}={repr(v)}' for k, v in kvs])
 
-
+import sys
+sys.path.append('/workspace/user_code/chatbot_text2sql')
+from openai_api import ChatCompletion
 class OpenAIModel(LanguageModel):
     def __init__(self, model: str, prompt_template: str, api_key: str = None,
                  temperature: float = 0.0, top_p: float = 1.0, best_of: int = 1,
@@ -247,21 +197,30 @@ class OpenAIModel(LanguageModel):
                     "https://huggingface.co/SaulLu/codex-like-tokenizer/raw/main/merges.txt",
                     '.codex-merges.txt')
                 )
-
+        else:
+            import tiktoken
+            os.environ["TIKTOKEN_CACHE_DIR"] = '/workspace/user_code/chatbot_text2sql/tiktoken_cache'
+            self.tokenizer = tiktoken.get_encoding("cl100k_base")
+            
         # self.vocab is a list of readable token strings (e.g., ' hello' and '\n')
         # sorted by their token IDs (so self.vocab[0] is the first token, etc).
-        self.vocab = [v for k, v in
-                      sorted([(t_id, self.tokenizer.decode([t_id]))
-                              for _, t_id in self.tokenizer.get_vocab().items()])]
 
-    def tokenize(self, s: str) -> list[int]:
+        # self.vocab = [v for k, v in
+        #               sorted([(t_id, self.tokenizer.decode([t_id]))
+        #                       for _, t_id in self.tokenizer.get_vocab().items()])]
+        vocab_file = '/workspace/user_code/chatbot_text2sql/ft_local/cl100k_base_vocab.json'
+        self.vocab = [v for k, v in sorted(json.load(open(vocab_file)).items(), key=lambda x: int(x[0]))]
+
+
+
+    def tokenize(self, s: str) -> List[int]:
         return self.tokenizer.encode(s)
 
-    def vocabulary(self) -> list[str]:
+    def vocabulary(self) -> List[str]:
         # sort keys by value, then return the keys
         return self.vocab
 
-    def predict_token(self, prefix: str, valid_tokens: list[int], top_k: int = 1) -> tuple[list[int], list[float]]:
+    def predict_token(self, prefix: str, valid_tokens: List[int], top_k: int = 1) -> Tuple[List[int], List[float]]:
         # change bias of valid tokens to make them more likely
         # bias can only be set for 300 tokens at a time
         assert top_k <= 5, "top_k must be less than or equal to 5"
@@ -311,7 +270,7 @@ class OpenAIModel(LanguageModel):
             valid_bias[50256] = -100
             self._before_prediction_hook()
 
-            response = openai.Completion.create(model=self.model, prompt=prompt, logprobs=top_k,
+            response = openai.ChatCompletion.create(model=self.model, prompt=prompt, logprobs=top_k,
                                                 temperature=self.temperature, top_p=self.top_p,
                                                 best_of=self.best_of, max_tokens=1, logit_bias=valid_bias)
 
@@ -341,22 +300,32 @@ class OpenAIModel(LanguageModel):
 
         request_key = make_request_key(self.model, prompt, self.best_of, max_tokens,
                                        self.temperature, None)
-
+        messages = []
+        messages.append({
+                "role": "user",
+                "content": prompt
+            })
         if request_key in self._cache:
             return self._cache.get(request_key)
 
-        response = openai.Completion.create(model=self.model, prompt=prompt,
-                                            temperature=self.temperature, top_p=self.top_p,
+        
+        # response = openai.ChatCompletion.create
+        response = ChatCompletion(model=self.model, messages=messages,
+                                            temperature=self.temperature, 
+                                            top_p=self.top_p,
                                             logit_bias={50256: -100},
-                                            best_of=self.best_of,
+                                            # best_of=self.best_of,
                                             max_tokens=min(
                                                 max_tokens,
                                                 model_limit - prompt_tokens - 1),
-                                            stop=stop)
+                                            # stop=stop
+                                            )
 
-        self._cache[request_key] = response.choices[0].text
+        # self._cache[request_key] = response.choices[0].text
+        text = response.choices[0].message['content']
+        self._cache[request_key] = text
 
-        return response.choices[0].text
+        return text
 
 # Source: https://platform.openai.com/docs/models/
 def get_token_limit(model_name):
@@ -375,7 +344,7 @@ def get_token_limit(model_name):
     raise ValueError('Unknown model ' + model_name)
 
 
-def filter_maximal_tokens(tokens: list[int], tokenizer) -> list[int]:
+def filter_maximal_tokens(tokens: List[int], tokenizer) -> List[int]:
     '''Given a list of tokens, only keep the maximal ones.
 
     This takes quadratic time; might be slow with overly long lists.
@@ -383,7 +352,8 @@ def filter_maximal_tokens(tokens: list[int], tokenizer) -> list[int]:
     and then only taking the leaves.
     '''
 
-    token_strs = list(map(tokenizer.decode, tokens))
+    # token_strs = list(map(tokenizer.decode, tokens))
+    token_strs = [tokenizer.decode([i]) for i in tokens]
     result = []
 
     for i in range(len(tokens)):
